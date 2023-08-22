@@ -9,6 +9,18 @@ drop sequence Seq_licenseId;
 drop package PlaceUI;
 drop package TrainUI;
 
+----DROP STATS----
+exec dbms_stats.delete_table_stats(user, 'Track');
+exec dbms_stats.delete_table_stats(user, 'Station');
+exec dbms_stats.delete_table_stats(user, 'TrainRecipe');
+exec dbms_stats.delete_table_stats(user, 'Train');
+exec dbms_stats.delete_table_stats(user, 'Place');
+exec dbms_stats.delete_table_stats(user, 'Carriage');
+exec dbms_stats.delete_table_stats(user, 'Locomotive');
+exec dbms_stats.delete_table_stats(user, 'Car');
+exec dbms_stats.delete_table_stats(user, 'License');
+exec dbms_stats.delete_table_stats(user, 'CargoType');
+
 ----DROP TABLES----
 drop table Track;
 drop table Station;
