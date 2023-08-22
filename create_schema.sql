@@ -85,11 +85,6 @@ create or replace package PlaceUI as
     procedure removeTrack(
         in_code Track.code%type
     );
-    procedure addPassangerStation(
-        in_name Station.name%type,
-        in_trainCapacity Station.trainCapacity%type,
-        in_cargoCapacity Station.cargoCapacity%type
-    );
     procedure addStation(
         in_name Station.name%type,
         in_trainCapacity Station.trainCapacity%type,
@@ -157,25 +152,6 @@ create or replace package body PlaceUI as
             when no_data_found then
                 raise_application_error(-20095, 'Track of inputed code does not exists.');
     end removeTrack;
-
-    procedure addPassangerStation(
-        in_name Station.name%type,
-        in_trainCapacity Station.trainCapacity%type,
-        in_cargoCapacity Station.cargoCapacity%type
-    ) is
-        cargo_id CargoType.id%type;
-    begin
-        select id into cargo_id from CargoType where comodity='pasažéři';
-
-        parentInserts := true;
-        insert into Station(name, trainCapacity, cargoTypeId, cargoCapacity)
-            values (in_name, in_trainCapacity, cargo_id, in_cargoCapacity);
-        parentInserts := false;
-
-        exception
-          when no_data_found then
-            raise_application_error(-20095, 'Inputed cargo type does not exists in CargoType table.');
-    end addPassangerStation;
 
     procedure addStation(
         in_name Station.name%type,
@@ -377,7 +353,7 @@ create or replace package TrainUI as
     procedure createTrain(
         in_name Train.name%type,
         in_stationName Station.name%type,
-        in_carId Car.id%type --this is first car with wich you will start your train
+        in_code Locomotive.code%type --this is first car with wich you will start your train
     );
     procedure removeTrain(
         in_name Train.name%type
@@ -426,11 +402,11 @@ create or replace package TrainUI as
 
     function getWeightOfTrain(
         in_name Train.name%type
-    ) return Car.weight%type;
+    ) return integer;
     function getWeightScoreOfTrainWithNewCar(
         in_trainId Train.id%type,
         in_carId Car.id%type
-    ) return Car.weight%type;
+    ) return integer;
 
     procedure addCarriageToTrain(
         in_name Train.name%type,
@@ -456,10 +432,11 @@ create or replace package body TrainUI as
     procedure createTrain(
         in_name Train.name%type,
         in_stationName Station.name%type,
-        in_carId Car.id%type --this is first car with wich you will start your train --this is first car with wich you will start your train
+        in_code Locomotive.code%type --this is first car with wich you will start your train --this is first car with wich you will start your train
     ) is
         in_trainId Train.id%type;
         in_placeId Place.id%type;
+        in_carId Car.id%type;
         train_count Station.trainCapacity%type;
         train_cap Station.trainCapacity%type;
     begin
@@ -471,6 +448,7 @@ create or replace package body TrainUI as
             insert into Train(name, placeId) values (in_name, in_placeId);
 
             select id into in_trainId from Train where name=in_name;
+            select id into in_carId from Locomotive where code=in_code;
 
             insert into TrainRecipe(trainId, carId) values (in_trainId, in_carId);
         else
@@ -478,7 +456,7 @@ create or replace package body TrainUI as
         end if;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Station of inputed name does not exist.');
+            raise_application_error(-90095, 'Invalid station name or invalid Locomotive code was inputed.');
     end createTrain;
 
     procedure removeTrain(
@@ -658,7 +636,7 @@ create or replace package body TrainUI as
     --Functions computing wieght score of trains
     function getWeightScoreOfTrain(
         in_id Train.id%type
-    ) return Car.weight%type
+    ) return integer
     is
         cursor train_cursor is
             select * from TrainRecipe where trainId=in_id;
@@ -667,7 +645,7 @@ create or replace package body TrainUI as
         car_weight Car.weight%type;
         locoCapacity Locomotive.weightCapacity%type;
         
-        weight_score Car.weight%type;
+        weight_score integer := 0;
     begin
         for recipe in train_cursor loop
             select count(*) into is_in_carriage from Carriage where id=recipe.carId;
@@ -686,10 +664,10 @@ create or replace package body TrainUI as
 
     function getWeightOfTrain(
         in_name Train.name%type
-    ) return Car.weight%type
+    ) return integer
     is
         train_id Train.id%type;
-        weight Car.weight%type;
+        weight integer;
     begin
         select id into train_id from Train where name=in_name;
         weight := getWeightScoreOfTrain(train_id);
@@ -703,13 +681,13 @@ create or replace package body TrainUI as
     function getWeightScoreOfTrainWithNewCar(
         in_trainId Train.id%type,
         in_carId Car.id%type
-    ) return Car.weight%type
+    ) return integer
     is
         is_in_carriage number(1, 0) := 0;
         locoCapacity Locomotive.weightCapacity%type;
         car_weight Car.weight%type;
         
-         weight_score Car.weight%type;
+         weight_score integer;
     begin
         if fromTrigger then
             weight_score := getWeightScoreOfTrain(in_trainId);
@@ -993,3 +971,46 @@ before update on TrainRecipe
 begin
     raise_application_error(-90090, 'Updates are prohibited for table TrainRecipe.');
 end;
+
+----VIEWS----
+--To see train positions
+create or replace view StationsOccupancy as
+    select S.name Station, nvl(T.name, '-') Train
+    from Station S left join Train T on S.id=T.placeId
+    order by S.name;
+
+create or replace view TracksOccupancy as
+    select Tr.code Track, nvl(T.name, '-') Train
+    from Track Tr left join Train T on Tr.id=T.placeId
+    order by Tr.code;
+
+create or replace view TrainPositions as
+    select T.name Train, nvl(Tr.code) Track, nvl(S.name) Station
+    from Train T left join Station S on T.placeId=S.id
+        left join Track Tr on T.placeId=Tr.id
+    order by T.name;
+
+--To see trainRecipes
+create or replace view CodeCars as
+    select nvl(Cr.code, L.code) Code, C.brand, C.model, C.maxSpeed, C.weight
+    from Car C left join Carriage Cr on C.id=Cr.id
+        left join Locomotive L on C.id=L.id;
+
+
+create or replace view UnusedCars as
+    select nvl(Cr.code, L.code) Code, C.brand, C.model, C.maxSpeed, C.weight
+    from Car C left join TrainRecipe R on C.id=R.carId
+        left join Carriage Cr on C.id=Cr.id
+        left join Locomotive L on C.id=L.id
+    where R.trainId is null;
+
+create or replace view TrainRecipesView as
+    select T.name Train, nvl(Cr.code, L.code) Car
+    from  TrainRecipe R join Train T on R.trainId=T.id
+        left join Carriage Cr on R.carId=Cr.id
+        left join Locomotive L on R.carId=L.id;
+
+--To see weightscores for all trains
+create or replace view TrainsWeightScore as
+    select T.name Train, TrainUI.getWeightOfTrain(T.name) WeightScore
+    from Train T;
