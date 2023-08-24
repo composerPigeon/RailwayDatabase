@@ -94,6 +94,14 @@ create or replace package PlaceUI as
     procedure removeStation(
         in_name Station.name%type
     );
+
+    function getStationCapacity(
+        in_name Station.name%type
+    ) return integer;
+
+    function getTrackCapacity(
+        in_code Track.code%type
+    ) return integer;
 end PlaceUI;
 /
 
@@ -111,6 +119,10 @@ create or replace package body PlaceUI as
     ) is
     begin
         delete from CargoType where comodity=in_comodity;
+
+        if sql%notfound then
+            raise_application_error(-20095, 'Comodity you tried delete did not exist');
+        end if;
     end removeCargoType;
 
     procedure addTrack(
@@ -142,8 +154,6 @@ create or replace package body PlaceUI as
         del_id Track.id%type;
     begin
         select id into del_id from Track where code=in_code;
-
-        --
         childDeletes := true;
         delete from Place where id=del_id;
         childDeletes := false;
@@ -188,6 +198,48 @@ create or replace package body PlaceUI as
             when no_data_found then
                 raise_application_error(-20095, 'Station of inputed name does not exists.');
     end removeStation;
+
+    function getStationCapacity(
+        in_name Station.name%type
+    ) return integer
+    is
+        capacity integer := 0;
+
+        in_id Station.id%type;
+        train_count integer;
+        station_capacity integer;
+    begin
+        select id, trainCapacity into in_id, station_capacity from Station where name=in_name;
+        select count(*) into train_count from Train where placeId=in_id;
+
+        capacity := station_capacity - train_count;
+
+        return capacity;
+    exception
+      when no_data_found then
+        raise_application_error(-20095, 'Station of inputed name does not exist.');
+    end getStationCapacity;
+
+    function getTrackCapacity(
+        in_code track.code%type
+    ) return integer
+    is
+        capacity integer := 0;
+
+        in_id Station.id%type;
+        train_count integer;
+        track_capacity integer;
+    begin
+        select id, numOfRails into in_id, track_capacity from Track where code=in_code;
+        select count(*) into train_count from Train where placeId=in_id;
+
+        capacity := track_capacity - train_count;
+
+        return capacity;
+    exception
+      when no_data_found then
+        raise_application_error(-20095, 'Track of inputed code does not exist.');
+    end getTrackCapacity;
 end PlaceUI;
 /
 
@@ -337,8 +389,7 @@ create table TrainRecipe (
             on delete cascade,
     carId integer
         constraint TrainRecipe_carId_FK_Car
-            references Car(id)
-            on delete cascade,
+            references Car(id),
     constraint TrainRecipe_PK primary key (trainId, carId)
 );
 
@@ -435,16 +486,16 @@ create or replace package body TrainUI as
         in_code Locomotive.code%type --this is first car with wich you will start your train --this is first car with wich you will start your train
     ) is
         in_trainId Train.id%type;
-        in_placeId Place.id%type;
         in_carId Car.id%type;
-        train_count Station.trainCapacity%type;
-        train_cap Station.trainCapacity%type;
+        in_placeId Place.id%type;
+
+        station_cap integer;
     begin
-        select id, trainCapacity into in_placeId, train_cap from Station where name=in_stationName;
+        station_cap := PlaceUI.getStationCapacity(in_stationName);
 
-        select count(*) into train_count from Train where placeId=in_placeId;
+        select id into in_placeId from Station where name=in_stationName;
 
-        if train_count < train_cap then
+        if station_cap > 0 then
             insert into Train(name, placeId) values (in_name, in_placeId);
 
             select id into in_trainId from Train where name=in_name;
@@ -452,11 +503,11 @@ create or replace package body TrainUI as
 
             insert into TrainRecipe(trainId, carId) values (in_trainId, in_carId);
         else
-            raise_application_error(-90085, 'Station is occupied by other trains.');
+            raise_application_error(-20085, 'Station is occupied by other trains.');
         end if;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Invalid station name or invalid Locomotive code was inputed.');
+            raise_application_error(-20095, 'Invalid Locomotive code was inputed.');
     end createTrain;
 
     procedure removeTrain(
@@ -465,35 +516,33 @@ create or replace package body TrainUI as
         train_id  Train.id%type;
     begin
         select id into train_id from Train where name=in_name;
+
         delete from Train where name=in_name;
 
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of inputed name does not exist.');
+            raise_application_error(-20095, 'Train of inputed name does not exist.');
     end removeTrain;
 
     procedure moveTrainToTrack(
         in_trainName Train.name%type,
         in_code Track.code%type
     ) is
-        train_count integer := 0;
-        rail_count Track.numOfRails%type;
-        track_id Track.id%type;
+        track_cap integer;
+
+        track_id Place.id%type;
     begin
-        select nvl(id, null), nvl(numOfRails, null) into track_id, rail_count from Track where code=in_code;
-        select count(*) into train_count from Train where placeId=track_id;
+        track_cap := PlaceUI.getTrackCapacity(in_code);
+
+        select id into track_id from Track where code=in_code;
         
-        if track_id is not null then
-            if train_count < rail_count then
-                update Train set placeId=track_id where name=in_trainName;
-                if sql%rowcount = 0 then
-                    raise_application_error(-90095, 'Inputed train does not exist.');
-                end if;
-            else
-                raise_application_error(-90085, 'Train can not be moved, because selected track is occupied.');
+        if track_cap > 0 then
+            update Train set placeId=track_id where name=in_trainName;
+            if sql%rowcount = 0 then
+                raise_application_error(-20095, 'Inputed train does not exist.');
             end if;
         else
-            raise_application_error(-90095, 'Inputed track does not exist.');
+            raise_application_error(-20085, 'Train can not be moved, because selected track is occupied.');
         end if;
     end moveTrainToTrack;
 
@@ -501,25 +550,20 @@ create or replace package body TrainUI as
         in_trainName Train.name%type,
         in_name Station.name%type
     )is
-        station_cap Station.trainCapacity%type;
+        station_cap integer;
         station_id Station.id%type;
-        train_count integer := 0;
-        train_id Train.id%type;
     begin
-        select nvl(id, null), nvl(trainCapacity, null) into station_id, station_cap from Station where name=in_name;
-        select count(*) into train_count from Train where placeId=station_id;
+        station_cap := PlaceUI.getStationCapacity(in_name);
 
-        if station_id is not null then
-            if train_count < station_cap then
-                update Train set placeId=station_id where name=in_trainName;
-                if sql%rowcount = 0 then
-                    raise_application_error(-90095, 'Inputed train does not exist.');
-                end if;
-            else
-                raise_application_error(-90085, 'Train can not be moved, because selected Stations capacity is full.');
+        select id into station_id from Station where name=in_name;
+
+        if station_cap > 0 then
+            update Train set placeId=station_id where name=in_trainName;
+            if sql%rowcount = 0 then
+                raise_application_error(-20095, 'Inputed train does not exist.');
             end if;
         else
-            raise_application_error(-90095, 'Inputed station does not exist.');
+            raise_application_error(-20085, 'Train can not be moved, because selected Stations capacity is full.');
         end if;
     end moveTrainToStation;
 
@@ -551,7 +595,7 @@ create or replace package body TrainUI as
         TrainUI.fromProcedure := false;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Given cargoType comodity does not exist.');
+            raise_application_error(-20095, 'Given cargoType comodity does not exist.');
     end createCarriage;
 
     procedure createLocomotive(
@@ -580,7 +624,7 @@ create or replace package body TrainUI as
         TrainUI.fromProcedure := false;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Given license does not exist.');
+            raise_application_error(-20095, 'Given license does not exist.');
     
     end createLocomotive;
 
@@ -595,7 +639,7 @@ create or replace package body TrainUI as
         TrainUI.fromProcedure := false;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Carriage of inputed code does not exist.');
+            raise_application_error(-20095, 'Carriage of inputed code does not exist.');
     end removeCarriage;
 
     procedure removeLocomotive(
@@ -609,7 +653,7 @@ create or replace package body TrainUI as
         TrainUI.fromProcedure := false;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Locomotive of inputed code does not exist.');
+            raise_application_error(-20095, 'Locomotive of inputed code does not exist.');
     end removeLocomotive;
 
     --Procedures for License table
@@ -630,7 +674,7 @@ create or replace package body TrainUI as
         delete from License where id=licenseId;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'License of inputed id does not exist.');
+            raise_application_error(-20095, 'License of inputed code does not exist.');
     end removeLicense;
 
     --Functions computing wieght score of trains
@@ -675,7 +719,7 @@ create or replace package body TrainUI as
         return weight;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of inputed name does not exist.');
+            raise_application_error(-20095, 'Train of inputed name does not exist.');
     end getWeightOfTrain;
 
     function getWeightScoreOfTrainWithNewCar(
@@ -703,9 +747,29 @@ create or replace package body TrainUI as
 
             return weight_score;
         else
-            raise_application_error(-90090, 'This function cannot be executed by user.');
+            raise_application_error(-20090, 'This function cannot be executed by user.');
         end if;
     end getWeightScoreOfTrainWithNewCar;
+
+    function getWeightScoreOfTrainWithoutLoco(
+        in_trainId Train.id%type,
+        in_locoId Locomotive.id%type
+    ) return integer
+    is
+        loco_weight Car.weight%type;
+        loco_capacity Locomotive.weightCapacity%type;
+
+        weight_score integer;
+    begin
+        weight_score := getWeightScoreOfTrain(in_trainId);
+
+        select weight into loco_weight from Car where id=in_locoId;
+        select weightCapacity into loco_capacity from Locomotive where id=in_locoId;
+
+        weight_score := weight_score + loco_capacity - loco_weight;
+
+        return weight_score;
+    end getWeightScoreOfTrainWithoutLoco;
 
     --Procedures for connecting cars into a train
     procedure addCarriageToTrain(
@@ -721,7 +785,7 @@ create or replace package body TrainUI as
         insert into TrainRecipe(trainId, carId) values (in_trainId, in_carId);
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of given name or Carriage of given code do not exist.');
+            raise_application_error(-20095, 'Train of given name or Carriage of given code do not exist.');
     end addCarriageToTrain;
 
     procedure addLocomotiveToTrain(
@@ -737,7 +801,7 @@ create or replace package body TrainUI as
         insert into TrainRecipe(trainId, carId) values (in_trainId, in_carId);
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of given name or Locomotive of given code do not exist.');
+            raise_application_error(-20095, 'Train of given name or Locomotive of given code do not exist.');
     end addLocomotiveToTrain;
 
     procedure removeCarriageFromTrain(
@@ -753,7 +817,7 @@ create or replace package body TrainUI as
         delete from TrainRecipe where trainId=in_trainId and carId=in_carId;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of given name or Carraige of given code do not exist.');
+            raise_application_error(-20095, 'Train of given name or Carraige of given code does not exist.');
     end removeCarriageFromTrain;
 
     procedure removeLocomotiveFromTrain(
@@ -762,14 +826,22 @@ create or replace package body TrainUI as
     ) is
         in_trainId Train.id%type;
         in_carId Car.id%type;
+        new_weight_score integer;
     begin
         select id into in_trainId from Train where name=in_name;
         select id into in_carId from Locomotive where code=in_code;
 
-        delete from TrainRecipe where trainId=in_trainId and carId=in_carId;
+        new_weight_score := getWeightScoreOfTrainWithoutLoco(in_trainId, in_carId);
+
+        if new_weight_score > 0 then
+            raise_application_error(-20080, 'Locomotive cannot be removed, because train would then be overweighted.');
+        else
+            delete from TrainRecipe where trainId=in_trainId and carId=in_carId;
+            delete from Train where id=in_trainId;
+        end if;
     exception
         when no_data_found then
-            raise_application_error(-90095, 'Train of given name or Carraige of given code do not exist.');
+            raise_application_error(-20095, 'Train of given name or Locomotive of given code does not exist.');
     end removeLocomotiveFromTrain;
 end TrainUI;
 /
@@ -847,11 +919,30 @@ end;
 /
 
 --CAR TRIGGERS
-create or replace trigger Car_Ins_Del_Trigger
-before insert or delete on Car
+create or replace trigger Car_Ins_Trigger
+before insert on Car
 begin
     if not TrainUI.fromProcedure then
-        raise_application_error(-90090, 'Operations for table Car are prohibited, use defined procedures instead.');
+        raise_application_error(-20090, 'Inserts for table Car are prohibited, use defined procedures instead.');
+    end if;
+end;
+/
+
+create or replace trigger Car_Del_Trigger
+before delete on Car
+for each row
+declare
+    is_in_train number(1,0) := 0;
+begin
+    if not TrainUI.fromProcedure then
+        raise_application_error(-20090, 'Deletes for table Car are prohibited, use defined procedures instead.');
+    else
+        select count(*) into is_in_train from TrainRecipe where carId=:old.id;
+        if is_in_train = 1 then
+            raise_application_error(-20100, 'Car is part of a train and cant be deleted.');
+        else
+            delete from TrainRecipe where carId=:old.id;
+        end if;
     end if;
 end;
 /
@@ -869,7 +960,7 @@ declare
     new_id integer;
 begin
     if not TrainUI.fromProcedure then
-        raise_application_error(-90090, 'Inserting into table Carriage is prohibited, use defined procedures instead.');
+        raise_application_error(-20090, 'Inserting into table Carriage is prohibited, use defined procedures instead.');
     else
         select Seq_carId.nextval into new_id from Dual;
 
@@ -885,7 +976,7 @@ create or replace trigger Carriage_Del_Trigger
 before delete on Carriage
 begin
     if not TrainUI.fromProcedure then
-        raise_application_error(-90090, 'Deleteing from table Carriage is prohibited, use defined procedures instead.');
+        raise_application_error(-20090, 'Deleteing from table Carriage is prohibited, use defined procedures instead.');
     end if;
 end;
 /
@@ -901,7 +992,7 @@ declare
     new_id integer;
 begin
     if not TrainUI.fromProcedure then
-        raise_application_error(-90090, 'Inserting into table Locomotive is prohibited, use defined procedures instead.');
+        raise_application_error(-20090, 'Inserting into table Locomotive is prohibited, use defined procedures instead.');
     else
         select Seq_carId.nextval into new_id from Dual;
 
@@ -917,7 +1008,7 @@ create or replace trigger Locomotive_Del_Trigger
 before delete on Locomotive
 begin
     if not TrainUI.fromProcedure then
-        raise_application_error(-90090, 'Deleteing from table Locomotive is prohibited, use defined procedures instead.');
+        raise_application_error(-20090, 'Deleteing from table Locomotive is prohibited, use defined procedures instead.');
     end if;
 end;
 /
@@ -937,7 +1028,7 @@ begin
     select count(*) into car_count from TrainRecipe where carId=:new.carId;
 
     if car_count > 0 then
-        raise_application_error(-90085, 'This car is already connected to some train.');
+        raise_application_error(-20085, 'This car is already connected to some train.');
     end if;
 
     TrainUI.fromTrigger := true;
@@ -945,22 +1036,7 @@ begin
     TrainUI.fromTrigger := false;
 
     if weight_score > 0 then
-        raise_application_error(-90080, 'Train will be overweighted so this car can not be connected.');
-    end if;
-end;
-/
-
---checks if all Carriages are deleted to delete Train
-create or replace trigger TrainRecipe_Del_Trigger
-after delete on TrainRecipe
-for each row
-declare
-    car_count integer := 0;
-begin
-    select count(*) into car_count from TrainRecipe where trainId=:old.trainId;
-
-    if car_count = 0 then
-        delete from Train where id=:old.trainId;
+        raise_application_error(-20080, 'Train will be overweighted so this car can not be connected.');
     end if;
 end;
 /
@@ -969,8 +1045,9 @@ end;
 create or replace trigger TrainRecipe_Upd_Trigger
 before update on TrainRecipe
 begin
-    raise_application_error(-90090, 'Updates are prohibited for table TrainRecipe.');
+    raise_application_error(-20090, 'Updates are prohibited for table TrainRecipe.');
 end;
+/
 
 ----VIEWS----
 --To see train positions
@@ -985,17 +1062,35 @@ create or replace view TracksOccupancy as
     order by Tr.code;
 
 create or replace view TrainPositions as
-    select T.name Train, nvl(Tr.code) Track, nvl(S.name) Station
+    select T.name Train, nvl(Tr.code, '-') Track, nvl(S.name, '-') Station
     from Train T left join Station S on T.placeId=S.id
         left join Track Tr on T.placeId=Tr.id
     order by T.name;
+
+create or replace view StationCapacities as
+    select S.name Station, PlaceUI.getStationCapacity(S.name) Capacity
+    from Station S;
+
+create or replace view TrackCapacities as
+    select T.code Track, PlaceUI.getTrackCapacity(T.code) Capacity
+    from Track T;
 
 --To see trainRecipes
 create or replace view CodeCars as
     select nvl(Cr.code, L.code) Code, C.brand, C.model, C.maxSpeed, C.weight
     from Car C left join Carriage Cr on C.id=Cr.id
-        left join Locomotive L on C.id=L.id;
+        left join Locomotive L on C.id=L.id
+    order by Code;
 
+create or replace view CarriageView as
+    select C.brand, C.model, C.maxSpeed, C.weight, Cr.code, Cr.capacity, Ct.comodity
+    from Car C join Carriage Cr on C.id=Cr.id
+        join CargoType Ct on Ct.id=Cr.cargoTypeId;
+
+create or replace view LocomotiveView as
+    select C.brand, C.model, C.maxSpeed, C.weight, L.code, L.weightCapacity, Lic.code License
+    from Car C join Locomotive L on C.id=L.id
+        join License Lic on L.licenseId=Lic.id;
 
 create or replace view UnusedCars as
     select nvl(Cr.code, L.code) Code, C.brand, C.model, C.maxSpeed, C.weight
@@ -1008,7 +1103,8 @@ create or replace view TrainRecipesView as
     select T.name Train, nvl(Cr.code, L.code) Car
     from  TrainRecipe R join Train T on R.trainId=T.id
         left join Carriage Cr on R.carId=Cr.id
-        left join Locomotive L on R.carId=L.id;
+        left join Locomotive L on R.carId=L.id
+    order by T.name;
 
 --To see weightscores for all trains
 create or replace view TrainsWeightScore as
