@@ -112,6 +112,9 @@ create or replace package body PlaceUI as
     ) is
     begin
         insert into CargoType(comodity, unit) values (in_comodity, in_unit);
+    exception
+        when dup_val_on_index then
+            raise_application_error(-20075, 'Comodity type of this id already exists.');
     end addCargoType;
 
     procedure removeCargoType(
@@ -178,8 +181,8 @@ create or replace package body PlaceUI as
             values(in_name, in_trainCapacity, cargo_id, in_cargoCapacity);
         parentInserts := false;
 
-        exception
-          when no_data_found then
+    exception
+        when no_data_found then
             raise_application_error(-20095, 'Inputed cargo type does not exists in CargoType table.');
     end addStation;
 
@@ -288,6 +291,9 @@ begin
     select Seq_placeId.nextval into new_id from Dual;
     insert into Place(id) values(new_id);
     :new.id := new_id;
+exception
+    when dup_val_on_index then
+        raise_application_error(-20075, 'Place of this id already exists.');
 end;
 /
 
@@ -314,6 +320,9 @@ begin
     insert into Place(id) values(new_id);
 
     :new.id := new_id;
+exception
+    when dup_val_on_index then
+        raise_application_error(-20075, 'Place of this id already exists.');
 end;
 /
 
@@ -508,6 +517,8 @@ create or replace package body TrainUI as
     exception
         when no_data_found then
             raise_application_error(-20095, 'Invalid Locomotive code was inputed.');
+        when dup_val_on_index then
+            raise_application_error(-20075, 'Train of this id already exists.');
     end createTrain;
 
     procedure removeTrain(
@@ -663,6 +674,9 @@ create or replace package body TrainUI as
     ) is
     begin
         insert into License(code, description) values (in_code, in_desc);
+    exception
+        when dup_val_on_index then
+            raise_application_error(-20075, 'License of this id already exists.');
     end createLicense;
 
     procedure removeLicense(
@@ -968,6 +982,9 @@ begin
 
         :new.id := new_id;
     end if;
+exception
+    when dup_val_on_index then
+        raise_application_error(-20075, 'Car of this id already exists.');
 end;
 /
 
@@ -1000,6 +1017,9 @@ begin
 
         :new.id := new_id;
     end if;
+exception
+    when dup_val_on_index then
+        raise_application_error(-20075, 'Car of this id already exists.');
 end;
 /
 

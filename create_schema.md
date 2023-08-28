@@ -216,6 +216,7 @@ Tabulka TrainRecipe udržuje informaci z jakých drážních vozidel se skládá
 
 ## Chyby
 V aplikaci jsou zavedené následující chybové kódy, které odpovídají různým situacím, které mohou nastat.
+- -20075: duplikované id
 - -20080: Přetížený vlak
 - -20085: Vztah s položkou již existuje a nelze vytvořit nový
 - -20090: Snaha o provedení nedovolené operace s objektem
