@@ -212,7 +212,7 @@ create or replace package body PlaceUI as
         train_count integer;
         station_capacity integer;
     begin
-        select id, trainCapacity into in_id, station_capacity from Station where name=in_name;
+        select id, trainCapacity into in_id, station_capacity from Station where name=in_name for update;
         select count(*) into train_count from Train where placeId=in_id;
 
         capacity := station_capacity - train_count;
@@ -233,7 +233,7 @@ create or replace package body PlaceUI as
         train_count integer;
         track_capacity integer;
     begin
-        select id, numOfRails into in_id, track_capacity from Track where code=in_code;
+        select id, numOfRails into in_id, track_capacity from Track where code=in_code for update;
         select count(*) into train_count from Train where placeId=in_id;
 
         capacity := track_capacity - train_count;
